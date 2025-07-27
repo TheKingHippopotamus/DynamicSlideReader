@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Dynamic Slide Reader</title>
+  <style>
+    /* ––––– Reset בסיסי ––––– */
+    * { margin:0; padding:0; box-sizing:border-box }
+    html, body {
+      width:100%; height:100%;
+      overflow:hidden;
+      background:radial-gradient(circle at center, #1a092a 0%, #0b0614 100%);
+      font-family:'Segoe UI',sans-serif;
+    }
+
+    /* ––––– קונטיינר שקוף ממורכז ––––– */
+    #slide-container {
+      position:absolute;
+      top:50%; left:50%;
+      width:90vw; height:90vh;
+      max-width:1090px; max-height:840px;
+      transform:translate(-50%,-50%);
+      background:transparent;
+      overflow:hidden;
+    }
+
+    /* ––––– iframe ו‑catcher תופסים 100% מהקונטיינר ––––– */
+    #slide-frame,
+    #frame-catcher {
+      position:absolute;
+      top:0; left:0;
+      width:100%; height:100%;
+      border:none;
+    }
+ /* 1. CSS: רק transition על opacity, עם will-change כדי לשפר ביצועים */
+#slide-frame {
+  opacity: 1;
+  transition: opacity .6s ease‑in‑out;
+  will-change: opacity;
+  background: transparent;
+  z-index: 0;
+}
+
+    #frame-catcher {
+      z-index:5;
+      cursor:pointer;
+      background:transparent;
+    }
+
+    /* ––––– בקרה על הטיימר + כפתור Logs ––––– */
+    .controls {
+      position:fixed; top:20px; right:20px; z-index:50;
+      background:rgba(0,0,0,0.6); padding:6px 10px; border-radius:6px;
+      display:flex; align-items:center; gap:8px;
+    }
+    .controls label { color:#ccc; font-size:14px }
+    .controls select, .controls button {
+      background:#2e154b; color:#fff; border:1px solid #555;
+      border-radius:4px; padding:4px 8px; font-size:14px;
+      cursor:pointer;
+    }
+    .controls select:hover, .controls button:hover {
+      background:#3a1e6e;
+    }
+
+    /* ––––– Prev/Next ––––– */
+    .nav-buttons {
+      position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+      z-index:50; display:flex; gap:12px;
+    }
+    .nav-buttons button {
+      background:rgba(255,255,255,0.1); color:#fff; border:1px solid #555;
+      border-radius:4px; padding:6px 12px; font-size:14px;
+      cursor:pointer; transition:background .3s;
+    }
+    .nav-buttons button:hover {
+      background:rgba(255,255,255,0.2);
+    }
+
+    /* ––––– מוניטור אירועים ––––– */
+    #monitor {
+      position:fixed; bottom:20px; left:20px; z-index:40;
+      width:300px; height:180px; background:rgba(0,0,0,0.8);
+      color:#eee; font-family:monospace; font-size:12px;
+      border-radius:6px; display:flex; flex-direction:column;
+      overflow:hidden;
+    }
+    #monitor-header {
+      display:flex; justify-content:space-between; align-items:center;
+      padding:6px 8px; border-bottom:1px solid #444;
+      background:rgba(0,0,0,0.9);
+    }
+    #monitor-header button {
+      background:transparent; border:none; color:#888;
+      font-size:16px; cursor:pointer;
+    }
+    #monitor-content {
+      flex:1; overflow-y:auto; padding:8px; list-style:none;
+    }
+    #monitor-content li {
+      margin-bottom:4px; line-height:1.2;
+    }
+    /* צבעים לאירועים */
+    .log-next    { color:#4af }
+    .log-prev    { color:#fa8 }
+    .log-timer   { color:#8f4 }
+    .log-load    { color:#ccc }
+    .log-display { color:#ccc }
+    .log-click   { color:#4aa }
+    .log-touch   { color:#4aa }
+    .log-key     { color:#aaa }
+  </style>
+</head>
+<body>
+
+  <!-- שקופית במרכז -->
+  <div id="slide-container">
+    <iframe id="slide-frame" src="article_thebeatjuly2025-1.html"></iframe>
+    <div id="frame-catcher"></div>
+  </div>
+
+  <!-- בקרה על טיימר + Auto Toggle + Logs -->
+  <div class="controls">
+    <label for="timer">Timer:</label>
+    <select id="timer">
+      <option value="10000">10 s</option>
+      <option value="20000">20 s</option>
+      <option value="30000">30 s</option>
+      <option value="40000">40 s</option>
+      <option value="50000">50 s</option>
+      <option value="60000">60 s</option>
+    </select>
+    <button id="toggle-auto">Auto On</button>
+    <button id="toggle-monitor">Logs</button>
+  </div>
+
+  <!-- Prev/Next -->
+  <div class="nav-buttons">
+    <button id="btn-prev">⟵</button>
+    <button id="btn-next">⟶</button>
+  </div>
+
+  <!-- מוניטור אירועים -->
+  <div id="monitor">
+    <div id="monitor-header">
+      <span>
+        Slide:<span id="mon-slide">1</span> |
+        Int:<span id="mon-interval">10000</span>ms |
+        Elap:<span id="mon-elapsed">0</span>s
+      </span>
+      <button id="hide-monitor">×</button>
+    </div>
+    <ul id="monitor-content"></ul>
+  </div>
+
+  <script>
+    const totalSlides = 61;
+    let currentSlide = 1;
+    let autoEnabled = true;
+    let interval    = 10000;
+    let timer, startTime = Date.now();
+
+    const iframe      = document.getElementById("slide-frame");
+    const catcher     = document.getElementById("frame-catcher");
+    const timerSelect = document.getElementById("timer");
+    const autoBtn     = document.getElementById("toggle-auto");
+    const prevBtn     = document.getElementById("btn-prev");
+    const nextBtn     = document.getElementById("btn-next");
+    const mon         = document.getElementById("monitor");
+    const toggleMon   = document.getElementById("toggle-monitor");
+    const hideMon     = document.getElementById("hide-monitor");
+    const monSlide    = document.getElementById("mon-slide");
+    const monInterval = document.getElementById("mon-interval");
+    const monElapsed  = document.getElementById("mon-elapsed");
+    const monContent  = document.getElementById("monitor-content");
+
+    
+
+    // עדכון Elapsed
+    setInterval(() => {
+      monElapsed.textContent = Math.floor((Date.now() - startTime)/1000);
+    }, 1000);
+
+    function resetStopwatch(){
+      startTime = Date.now();
+      monElapsed.textContent = 0;
+    }
+
+    function appendMonitor(type, details){
+      const li = document.createElement("li");
+      const ts = new Date().toISOString().substr(11,8);
+      li.textContent = `[${ts}] ${type}: ${details}`;
+      let cls = "log-load";
+      switch(type){
+        case "NextSlide":    cls="log-next";    break;
+        case "PrevSlide":    cls="log-prev";    break;
+        case "StartTimer":   cls="log-timer";   break;
+        case "TimerChanged": cls="log-timer";   break;
+        case "DisplaySlide": cls="log-display"; break;
+        case "FrameClick":   cls="log-click";   break;
+        case "TouchStart":   cls="log-touch";   break;
+        case "Keydown":      cls="log-key";     break;
+      }
+      li.classList.add(cls);
+      monContent.appendChild(li);
+      if(monContent.children.length > 50)
+        monContent.removeChild(monContent.firstChild);
+      monContent.scrollTop = monContent.scrollHeight;
+    }
+
+
+
+
+        // מזריק CSS שקוף לאחר טעינת ה־iframe
+    function sanitizeIframe(){
+      try {
+        const doc = iframe.contentDocument;
+        const style = doc.createElement('style');
+        style.innerHTML = `
+          html, body { background: transparent !important; margin:0 !important; padding:0 !important; }
+        `;
+        doc.head.appendChild(style);
+        doc.documentElement.style.background = 'transparent';
+        doc.body.style.background = 'transparent';
+        doc.body.style.margin = '0';
+      } catch(e){ /* cross‐origin? */ }
+    }
+    iframe.addEventListener("load", sanitizeIframe);
+
+
+    function logEvent(type, details){
+      console.log(`${type} — ${details}`);
+      appendMonitor(type, details);
+    }
+
+
+
+    function loadSlide(n){
+      monSlide.textContent = n;
+      logEvent("LoadSlide", `slide ${n}`);
+      iframe.style.opacity = 0;
+      iframe.onload = () => {
+        setTimeout(() => {
+          iframe.style.opacity = 1;
+          logEvent("DisplaySlide", `slide ${n} visible`);
+        }, 300);
+      };
+      iframe.src = `article_thebeatjuly2025-${n}.html`;
+    }
+    
+
+    function nextSlide(src="timer"){
+      currentSlide = (currentSlide % totalSlides) + 1;
+      logEvent("NextSlide", `via ${src}`);
+      loadSlide(currentSlide);
+    }
+
+    function prevSlide(src="timer"){
+      currentSlide = (currentSlide - 2 + totalSlides) % totalSlides + 1;
+      logEvent("PrevSlide", `via ${src}`);
+      loadSlide(currentSlide);
+    }
+
+    function startTimer(){
+      clearInterval(timer);
+      monInterval.textContent = interval;
+      logEvent("StartTimer", `${interval}ms`);
+      timer = setInterval(()=> nextSlide("timer"), interval);
+    }
+
+    // התחלת המצגת
+    interval = parseInt(timerSelect.value);
+    loadSlide(currentSlide);
+    startTimer();
+
+    // Prev/Next
+    prevBtn.addEventListener("click", ()=>{
+      resetStopwatch();
+      logEvent("ButtonClick","prev");
+      prevSlide("button-prev");
+      if(autoEnabled) startTimer();
+    });
+    nextBtn.addEventListener("click", ()=>{
+      resetStopwatch();
+      logEvent("ButtonClick","next");
+      nextSlide("button-next");
+      if(autoEnabled) startTimer();
+    });
+
+    // שינוי טיימר
+    timerSelect.addEventListener("change", ()=>{
+      interval = parseInt(timerSelect.value);
+      logEvent("TimerChanged", `${interval}ms`);
+      if(autoEnabled) startTimer();
+    });
+
+    // Auto toggle
+    autoBtn.addEventListener("click", ()=>{
+      autoEnabled = !autoEnabled;
+      autoBtn.textContent = autoEnabled ? "Auto On" : "Auto Off";
+      if(autoEnabled) startTimer();
+      else clearInterval(timer);
+      logEvent("AutoToggle", autoEnabled ? "Enabled" : "Disabled");
+    });
+
+    // קליק על השקופית
+    catcher.addEventListener("click", e=>{
+      resetStopwatch();
+      logEvent("FrameClick", `${e.clientX},${e.clientY}`);
+      nextSlide("frame-click");
+      if(autoEnabled) startTimer();
+    });
+
+    // מגע במסך
+    document.addEventListener("touchstart", e=>{
+      resetStopwatch();
+      const t = e.touches[0];
+      logEvent("TouchStart", `${t.clientX},${t.clientY}`);
+      nextSlide("touch");
+      if(autoEnabled) startTimer();
+    });
+
+    // חיצי מקלדת
+    document.addEventListener("keydown", e=>{
+      if(e.key==="ArrowRight"){
+        resetStopwatch();
+        logEvent("Keydown","ArrowRight");
+        nextSlide("key-arrow-right");
+        if(autoEnabled) startTimer();
+      }
+      if(e.key==="ArrowLeft"){
+        resetStopwatch();
+        logEvent("Keydown","ArrowLeft");
+        prevSlide("key-arrow-left");
+        if(autoEnabled) startTimer();
+      }
+    });
+        
+    // Logs toggle
+    toggleMon.addEventListener("click", ()=> mon.classList.toggle("hide"));
+    hideMon .addEventListener("click", ()=> mon.classList.add("hide"));
+  </script>
+</body>
+</html>
